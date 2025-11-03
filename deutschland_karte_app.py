@@ -1,5 +1,10 @@
-# deutschland_karte_app.py (v8)
-import io, json, os
+# deutschland_karte_app.py (v9)
+# Neu: Mehrfachauswahl der Bundesländer
+# - Kartenklick toggelt ein Bundesland in der Auswahl (hinzufügen/entfernen)
+# - Multiselect-Widget mit "Alle auswählen" / "Zurücksetzen"
+# - PDF hebt alle ausgewählten Länder hervor
+
+import io, json
 import streamlit as st
 from streamlit_folium import st_folium
 import folium, requests
@@ -9,7 +14,7 @@ from shapely.prepared import prep
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 
-st.set_page_config(page_title="Interaktive Deutschlandkarte", layout="wide")
+st.set_page_config(page_title="Interaktive Deutschlandkarte – Mehrfachauswahl", layout="wide")
 
 @st.cache_data(show_spinner=False)
 def load_states_geojson():
@@ -43,7 +48,7 @@ def build_geometries(geojson: dict):
     state_names = sorted([n for n in names if n])
     return feats, bounds, tooltip_fields, state_names
 
-def create_pdf(features, bounds, cities, selected_name):
+def create_pdf(features, bounds, cities, selected_names):
     page_w, page_h = landscape(A4); margin = 36
     draw_w = page_w - 2*margin; draw_h = page_h - 2*margin
     minx, miny, maxx, maxy = bounds
@@ -55,19 +60,23 @@ def create_pdf(features, bounds, cities, selected_name):
     buff = io.BytesIO(); c = canvas.Canvas(buff, pagesize=landscape(A4))
     c.setFont("Helvetica-Bold", 14)
     title = "Deutschland – Bundesländer & Großstädte"
-    if selected_name: title += f" (markiert: {selected_name})"
+    if selected_names:
+        title += " (markiert: " + ", ".join(selected_names) + ")"
     c.drawString(margin, page_h - margin + 10, title)
 
     from reportlab.lib import colors as C
     c.setLineWidth(0.5)
+    # Grundkarte
     for d in features:
-        draw_geom(c, d["geom"], proj, C.Color(0.12,0.23,0.54), C.Color(0.38,0.65,0.98), 0.2, 0.6)
+        draw_geom(c, d["geom"], proj, C.Color(0.12,0.23,0.54), C.Color(0.38,0.65,0.98), 0.18, 0.5)
 
-    if selected_name:
+    # Hervorhebung aller ausgewählten
+    if selected_names:
         for d in features:
-            if d["name"] == selected_name:
+            if d["name"] in set(selected_names):
                 draw_geom(c, d["geom"], proj, C.Color(0.09,0.4,0.2), C.Color(0.13,0.77,0.37), 0.5, 1.2)
 
+    # Städte
     c.setFont("Helvetica", 7)
     for nm, lat, lon in CITIES:
         x, y = proj(lon, lat); c.circle(x, y, 1.6, fill=1, stroke=0); c.drawString(x + 3, y + 1, nm)
@@ -129,23 +138,24 @@ CITIES = [
 ]
 
 def main():
-    st.title("Interaktive Deutschlandkarte – Bundesländer & Großstädte (PDF-Export)")
+    st.title("Interaktive Deutschlandkarte – Mehrfachauswahl + PDF")
 
     geojson = load_states_geojson()
     feats, bounds, tooltip_fields, state_names = build_geometries(geojson)
+
+    # Session-States
+    if "selected_states" not in st.session_state: st.session_state.selected_states = []  # list[str]
+    if "last_click" not in st.session_state: st.session_state.last_click = None
 
     left, right = st.columns([2,1], gap="large")
 
     with left:
         m = folium.Map(location=[51.1657, 10.4515], zoom_start=6, tiles="OpenStreetMap", control_scale=True)
 
-        if "selected_state" not in st.session_state: st.session_state.selected_state = None
-        if "last_click" not in st.session_state: st.session_state.last_click = None
-
         def style_fn(feature):
             props = feature.get("properties", {}) or {}
             nm = props.get("name") or props.get("GEN") or props.get("NAME_1") or props.get("NAME") or props.get("id")
-            if st.session_state.selected_state and nm == st.session_state.selected_state:
+            if nm in st.session_state.selected_states:
                 return dict(color="#166534", weight=2, fill=True, fillOpacity=0.5, fillColor="#22c55e")
             return dict(color="#1e3a8a", weight=1, dash_array="3", fill=True, fillOpacity=0.2, fillColor="#60a5fa")
 
@@ -153,6 +163,7 @@ def main():
 
         gj = folium.GeoJson(data=geojson, style_function=style_fn, highlight_function=highlight_fn, name="Bundesländer").add_to(m)
 
+        # Tooltip-Felder absichern
         safe_fields = [f for f in tooltip_fields if f in (feats[0]["props"] or {}).keys()] if feats else []
         if not safe_fields and feats:
             common = set(feats[0]["props"].keys())
@@ -162,12 +173,14 @@ def main():
         if safe_fields:
             folium.GeoJsonTooltip(fields=safe_fields, sticky=True).add_to(gj)
 
+        # Städte
         for name, lat, lon in CITIES:
             folium.CircleMarker([lat, lon], radius=4, color="black", weight=1, fill=True, fill_opacity=1).add_to(m)
             folium.Marker([lat, lon], tooltip=name, popup=f"{name} ({lat:.4f}, {lon:.4f})").add_to(m)
 
         data = st_folium(m, height=640, width=None, returned_objects=[])
 
+        # Kartenklick -> toggle
         if data and data.get("last_clicked"):
             lat = float(data["last_clicked"]["lat"]); lon = float(data["last_clicked"]["lng"])
             st.session_state.last_click = (lat, lon)
@@ -178,36 +191,45 @@ def main():
                     if d["prep"].intersects(buf) and (d["geom"].contains(pt) or d["geom"].intersects(buf)):
                         hit = d["name"]; break
                 except Exception: pass
-            st.session_state.selected_state = hit
+            if hit:
+                if hit in st.session_state.selected_states:
+                    st.session_state.selected_states = [s for s in st.session_state.selected_states if s != hit]
+                else:
+                    st.session_state.selected_states = st.session_state.selected_states + [hit]
 
     with right:
-        st.subheader("Auswahl")
-        idx = 0
-        if st.session_state.selected_state in state_names:
-            idx = (["– kein –"] + state_names).index(st.session_state.selected_state)
-        choice = st.selectbox("Bundesland", options=["– kein –"] + state_names, index=idx)
-        if choice != "– kein –":
-            st.session_state.selected_state = choice
+        st.subheader("Mehrfachauswahl")
+        cols = st.columns([1,1,1])
+        with cols[0]:
+            if st.button("Alle auswählen"):
+                st.session_state.selected_states = state_names.copy()
+        with cols[1]:
+            if st.button("Zurücksetzen"):
+                st.session_state.selected_states = []
+        with cols[2]:
+            st.write(f"Ausgewählt: **{len(st.session_state.selected_states)}**")
 
-        st.markdown("---")
-        st.write(st.session_state.selected_state or "Kein Bundesland ausgewählt")
+        # Multiselect mit Sync
+        sel = st.multiselect("Bundesländer", options=state_names, default=st.session_state.selected_states)
+        # Sync nur wenn verändert
+        if set(sel) != set(st.session_state.selected_states):
+            st.session_state.selected_states = sel
+
         if st.session_state.last_click:
             lat, lon = st.session_state.last_click
             st.caption(f"Letzter Klick: lat={lat:.6f}, lon={lon:.6f}")
-        if st.session_state.selected_state and st.button("Auswahl löschen"):
-            st.session_state.selected_state = None
 
         st.markdown("---")
         st.subheader("PDF-Export")
         if st.button("PDF generieren"):
-            buff = create_pdf(feats, bounds, CITIES, st.session_state.selected_state)
+            buff = create_pdf(feats, bounds, CITIES, st.session_state.selected_states)
+            label = "Deutschlandkarte" + ( "_" + "_".join([s.replace(' ','_') for s in st.session_state.selected_states]) if st.session_state.selected_states else "" )
             st.download_button("PDF herunterladen", data=buff.getvalue(),
-                               file_name=f"Deutschlandkarte{'_'+st.session_state.selected_state.replace(' ','_') if st.session_state.selected_state else ''}.pdf",
-                               mime="application/pdf")
+                               file_name=f"{label}.pdf", mime="application/pdf")
 
         st.markdown("---")
         st.subheader("Hinweise")
-        st.markdown("- Grenzen: GitHub `isellsoap/deutschlandGeoJSON`  \n- Basiskarte: © OpenStreetMap-Mitwirkende  \n- PDF: Vektorzeichnung (keine Kachel-Screenshots)")
+        st.markdown("- Klick auf die Karte toggelt Auswahl.  \n- Multiselect rechts ergänzt/entfernt Bundesländer.  \n- PDF hebt alle ausgewählten Länder hervor.")
 
 if __name__ == "__main__":
     main()
