@@ -1,1 +1,6 @@
-streamlit\nfolium\nstreamlit-folium\nshapely\nrequests\nreportlab\n
+streamlit
+folium
+streamlit-folium
+shapely
+requests
+reportlab
