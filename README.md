@@ -1,9 +1,7 @@
-# Deutschlandkarte – Checkbox + Zahlen + PDF (v11)
+# Deutschlandkarte – Mobile + Werte (v12.1)
 
-**Neu:**
-- Pro Bundesland ein **Zahlenfeld** erfassen.
-- Zahl wird in der **Webkarte** (optional) und im **PDF** am Landes-Zentroid ausgegeben.
-- Checkbox-Mehrfachauswahl & Kartenklick (Toggle) bleiben erhalten.
+**Fix:** `prepare_geometries()` nutzt jetzt **st.cache_resource** (Shapely/Prepared-Objekte sind nicht pickle-bar).
+Damit verschwindet der in deinen Logs sichtbare Fehler `PicklingError: Prepared geometries cannot be pickled`.
 
 ## Installation
 ```bash
@@ -15,6 +13,6 @@ pip install -r requirements.txt
 streamlit run deutschland_karte_app.py
 ```
 
-## PDF
-- Alle erfassten Werte werden mit max. **2 Dezimalstellen** gedruckt.
-- Optional: Code kann erweitert werden (Farbskala/Choropleth, Legende, Datenexport).
+## Hinweis
+Falls du eine ältere Datei hattest, in der `prepare_geometries` noch mit `st.cache_data` dekoriert war,
+bitte durch diese Version ersetzen.
