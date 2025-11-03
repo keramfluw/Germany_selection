@@ -1,10 +1,7 @@
-# Interaktive Deutschlandkarte – Mehrfachauswahl (v9)
+# Deutschlandkarte – Checkbox-Auswahl (v10)
 
-**Neu in v9**
-- **Mehrfachauswahl** der Bundesländer
-- Kartenklick **toggeln** (hinzufügen/entfernen)
-- **Multiselect** + Buttons **Alle auswählen** / **Zurücksetzen**
-- PDF-Export markiert **alle** ausgewählten Länder
+**Neu:** Auswahl über **Checkboxen** je Bundesland, plus Kartenklick (Toggle).
+Buttons: **Alle auswählen** / **Alle abwählen**. PDF hebt alle ausgewählten Länder hervor.
 
 ## Installation
 ```bash

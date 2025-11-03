@@ -1,10 +1,11 @@
-# deutschland_karte_app.py (v9)
-# Neu: Mehrfachauswahl der Bundesländer
-# - Kartenklick toggelt ein Bundesland in der Auswahl (hinzufügen/entfernen)
-# - Multiselect-Widget mit "Alle auswählen" / "Zurücksetzen"
+# deutschland_karte_app.py (v10)
+# Neu: Auswahl über einzelne **Checkboxen** (Anklickboxen) je Bundesland
+# - Rechte Spalte zeigt eine Liste von Checkboxen (alphabetisch)
+# - "Alle auswählen" / "Alle abwählen"
+# - Kartenklick toggelt weiterhin; Checkboxen bleiben synchron
 # - PDF hebt alle ausgewählten Länder hervor
 
-import io, json
+import io
 import streamlit as st
 from streamlit_folium import st_folium
 import folium, requests
@@ -14,7 +15,7 @@ from shapely.prepared import prep
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 
-st.set_page_config(page_title="Interaktive Deutschlandkarte – Mehrfachauswahl", layout="wide")
+st.set_page_config(page_title="Deutschlandkarte – Checkbox-Auswahl", layout="wide")
 
 @st.cache_data(show_spinner=False)
 def load_states_geojson():
@@ -66,14 +67,13 @@ def create_pdf(features, bounds, cities, selected_names):
 
     from reportlab.lib import colors as C
     c.setLineWidth(0.5)
-    # Grundkarte
     for d in features:
         draw_geom(c, d["geom"], proj, C.Color(0.12,0.23,0.54), C.Color(0.38,0.65,0.98), 0.18, 0.5)
 
-    # Hervorhebung aller ausgewählten
     if selected_names:
+        sel = set(selected_names)
         for d in features:
-            if d["name"] in set(selected_names):
+            if d["name"] in sel:
                 draw_geom(c, d["geom"], proj, C.Color(0.09,0.4,0.2), C.Color(0.13,0.77,0.37), 0.5, 1.2)
 
     # Städte
@@ -138,13 +138,13 @@ CITIES = [
 ]
 
 def main():
-    st.title("Interaktive Deutschlandkarte – Mehrfachauswahl + PDF")
+    st.title("Deutschlandkarte – Auswahl per Checkboxen & Klick (PDF)")
 
     geojson = load_states_geojson()
     feats, bounds, tooltip_fields, state_names = build_geometries(geojson)
 
     # Session-States
-    if "selected_states" not in st.session_state: st.session_state.selected_states = []  # list[str]
+    if "selected_states" not in st.session_state: st.session_state.selected_states = []
     if "last_click" not in st.session_state: st.session_state.last_click = None
 
     left, right = st.columns([2,1], gap="large")
@@ -163,7 +163,7 @@ def main():
 
         gj = folium.GeoJson(data=geojson, style_function=style_fn, highlight_function=highlight_fn, name="Bundesländer").add_to(m)
 
-        # Tooltip-Felder absichern
+        # Tooltip absichern
         safe_fields = [f for f in tooltip_fields if f in (feats[0]["props"] or {}).keys()] if feats else []
         if not safe_fields and feats:
             common = set(feats[0]["props"].keys())
@@ -192,32 +192,45 @@ def main():
                         hit = d["name"]; break
                 except Exception: pass
             if hit:
-                if hit in st.session_state.selected_states:
-                    st.session_state.selected_states = [s for s in st.session_state.selected_states if s != hit]
-                else:
-                    st.session_state.selected_states = st.session_state.selected_states + [hit]
+                sel = set(st.session_state.selected_states)
+                if hit in sel: sel.remove(hit)
+                else: sel.add(hit)
+                st.session_state.selected_states = sorted(list(sel))
 
     with right:
-        st.subheader("Mehrfachauswahl")
-        cols = st.columns([1,1,1])
-        with cols[0]:
+        st.subheader("Bundesländer auswählen")
+        c1, c2 = st.columns(2)
+        with c1:
             if st.button("Alle auswählen"):
                 st.session_state.selected_states = state_names.copy()
-        with cols[1]:
-            if st.button("Zurücksetzen"):
+        with c2:
+            if st.button("Alle abwählen"):
                 st.session_state.selected_states = []
-        with cols[2]:
-            st.write(f"Ausgewählt: **{len(st.session_state.selected_states)}**")
 
-        # Multiselect mit Sync
-        sel = st.multiselect("Bundesländer", options=state_names, default=st.session_state.selected_states)
-        # Sync nur wenn verändert
-        if set(sel) != set(st.session_state.selected_states):
-            st.session_state.selected_states = sel
+        st.markdown("---")
+        # Checkboxen alphabetisch in zwei Spalten auflisten
+        half = (len(state_names)+1)//2
+        left_names = state_names[:half]; right_names = state_names[half:]
+        colA, colB = st.columns(2)
 
-        if st.session_state.last_click:
-            lat, lon = st.session_state.last_click
-            st.caption(f"Letzter Klick: lat={lat:.6f}, lon={lon:.6f}")
+        def render_checks(names, col):
+            updated = set(st.session_state.selected_states)
+            with col:
+                for nm in names:
+                    key = f"chk_{nm}"
+                    checked = nm in updated
+                    new_val = st.checkbox(nm, value=checked, key=key)
+                    if new_val and not checked: updated.add(nm)
+                    if not new_val and checked: updated.discard(nm)
+            return sorted(list(updated))
+
+        afterA = render_checks(left_names, colA)
+        # Sync state before rendering second column to keep keys consistent
+        st.session_state.selected_states = afterA
+        afterB = render_checks(right_names, colB)
+        st.session_state.selected_states = afterB
+
+        st.caption(f"Ausgewählt: {len(st.session_state.selected_states)}")
 
         st.markdown("---")
         st.subheader("PDF-Export")
@@ -229,7 +242,7 @@ def main():
 
         st.markdown("---")
         st.subheader("Hinweise")
-        st.markdown("- Klick auf die Karte toggelt Auswahl.  \n- Multiselect rechts ergänzt/entfernt Bundesländer.  \n- PDF hebt alle ausgewählten Länder hervor.")
+        st.markdown("- Checkboxen rechts wählen Bundesländer direkt an/ab.  \n- Klick in der Karte toggelt die Auswahl synchron.  \n- PDF hebt alle ausgewählten Länder hervor.")
 
 if __name__ == "__main__":
     main()
